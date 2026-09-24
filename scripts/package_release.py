@@ -21,6 +21,7 @@ PLUGIN_ID = "quota-reset-router"
 EXTENSIONS = {
     "linux_amd64": "so",
     "linux_arm64": "so",
+    "darwin_amd64": "dylib",
     "darwin_arm64": "dylib",
     "windows_amd64": "dll",
 }

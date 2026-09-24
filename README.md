@@ -41,8 +41,8 @@ Ordering is not guaranteed in these cases. Quota can also change between refresh
 ## Requirements
 
 - CLIProxyAPI v7.3.15 (plugin ABI 1, schema 6). Other versions are untested.
-- Linux amd64 or arm64 (glibc 2.34 or newer), macOS on Apple silicon (arm64), or Windows amd64.
-- Intel Macs are not supported. On macOS amd64, CLIProxyAPI v7.3.15 crashes when it loads a Go plugin (its own Go scheduler example crashes the same way), because every Go runtime in a process shares one TLS slot on that platform.
+- Linux amd64 or arm64 (glibc 2.34 or newer), macOS 12 or newer on Apple silicon or Intel, or Windows amd64.
+- The Intel macOS build uses a patched Go toolchain. See [Intel Macs](#intel-macs).
 - Direct network access to both quota endpoints. Credentials with `proxy_url` or `base_url` are skipped. Quota polling ignores CLIProxyAPI's `proxy-url` and proxy environment variables.
 
 ## Install
@@ -111,10 +111,11 @@ Requires Management API authentication. Returns the version, mode, selection pol
 
 ## Development
 
-Build and test targets take `TARGET`: `linux_amd64` (default), `linux_arm64`, `darwin_arm64`, or `windows_amd64`.
+Build and test targets take `TARGET`: `linux_amd64` (default), `linux_arm64`, `darwin_amd64`, `darwin_arm64`, or `windows_amd64`.
 
 - Linux and Windows builds, `linux-test`, `native-test`, and `host-test` run in a pinned Docker image.
 - macOS builds need a macOS host with Go 1.21+ and the Xcode Command Line Tools. Go 1.26.8 is downloaded automatically.
+- `darwin_amd64` first builds the patched toolchain into `dist/_go-tls` (about a minute, once per checkout), then uses it for `make test` and `make build`.
 - `make test` needs Go 1.26+ and a C toolchain.
 
 ```sh
@@ -133,6 +134,12 @@ make load-test    # loads the zip into the official CLIProxyAPI; TARGET must mat
 - CI builds every target and loads each zip into the official CLIProxyAPI on its own platform.
 - `make clean` removes build output.
 
+### Intel Macs
+
+Stock Go on macOS amd64 keeps each thread's current goroutine in one fixed thread-local slot, slot 6, which Apple reserves for Go. Every Go runtime in a process uses that slot. CLIProxyAPI is itself a Go program, so a plugin built with stock Go runs on CLIProxyAPI's goroutines and heap, and CLIProxyAPI v7.3.15 crashes at startup (`fatal error: addspecial on invalid pointer`; CLIProxyAPI's own Go scheduler example fails with `unknown caller pc`). Linux, Windows, and Apple silicon give each runtime its own slot, so they are unaffected.
+
+The `darwin_amd64` library is built with Go 1.26.8 plus [`scripts/go-tls-slot.patch`](scripts/go-tls-slot.patch). The patch changes two constants so the plugin's runtime uses slot 11, which Apple also reserves and leaves unused. CLIProxyAPI keeps slot 6. The toolchain is built from the checksum-verified upstream source, and the build fails if any goroutine access in the library still uses slot 6.
+
 ## Release
 
 The CLIProxyAPI plugin store installs from this repository's latest published GitHub release. Each release contains `checksums.txt` and one `quota-reset-router_<version>_<os>_<arch>.zip` per target, holding the plugin, `LICENSE`, and `THIRD_PARTY_NOTICES.md`.
@@ -145,4 +152,4 @@ The CLIProxyAPI plugin store installs from this repository's latest published Gi
 
 ## Third-party notices
 
-Binary releases link the CLIProxyAPI plugin SDK (MIT), `gopkg.in/yaml.v3` (MIT and Apache-2.0), and the Go standard library (BSD-3-Clause). Windows builds also statically link parts of the MinGW-w64 runtime. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Binary releases link the CLIProxyAPI plugin SDK (MIT), `gopkg.in/yaml.v3` (MIT and Apache-2.0), and the Go standard library (BSD-3-Clause; patched on `darwin_amd64`). Windows builds also statically link parts of the MinGW-w64 runtime. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
