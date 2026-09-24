@@ -8,7 +8,7 @@ import (
 )
 
 const pluginID = "quota-reset-router"
-const pluginVersion = "0.2.0"
+const pluginVersion = "0.2.1"
 
 type config struct {
 	Mode           string        `yaml:"mode" json:"mode"`

@@ -368,7 +368,7 @@ plugins:
 
         try:
             wait_for(lambda: ready("shadow"), "startup and quota discovery")
-            assert status()["version"] == "0.2.0"
+            assert status()["version"] == "0.2.1"
             assert status()["selection_policy"] == "weekly_reset_first"
             assert message() == "a-seven-days", "shadow changed built-in routing"
             assert status()["last_decision"]["auth_id"] == "z-five-hours.json"

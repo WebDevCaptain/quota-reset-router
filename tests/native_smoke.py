@@ -286,7 +286,7 @@ def main():
             ],
         }
         configure("shadow", "plugin.register")
-        assert status()["version"] == "0.2.0"
+        assert status()["version"] == "0.2.1"
         assert status()["selection_policy"] == "weekly_reset_first"
         assert not call("scheduler.pick", request)["Handled"]
         assert status()["last_decision"]["auth_id"] == "z-five-hours"
