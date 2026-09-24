@@ -47,8 +47,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { target: darwin_amd64, runner: macos-15-intel }
-          - { target: darwin_arm64, runner: macos-15 }
+          # darwin_amd64 ships a patched Go runtime, so its host test adds a soak under GC pressure.
+          - { target: darwin_amd64, runner: macos-15-intel, soak: 180 }
+          - { target: darwin_arm64, runner: macos-15, soak: 0 }
     env:
       TARGET: ${{ matrix.target }}
     steps:
@@ -60,6 +61,26 @@ jobs:
           go-version: 1.26.8
           cache: false
       - run: make test build zip load-test
+      # macOS stand-in for the Linux test container: pin the quota hosts to the local fixture and trust its certificate.
+      - name: Set up host-test fixtures
+        run: |
+          set -eu
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -sha256 \
+            -keyout "$RUNNER_TEMP/fixture-key.pem" -out "$RUNNER_TEMP/fixture-cert.pem" \
+            -subj /CN=api.anthropic.com \
+            -addext subjectAltName=DNS:api.anthropic.com,DNS:chatgpt.com \
+            -addext extendedKeyUsage=serverAuth
+          sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$RUNNER_TEMP/fixture-cert.pem"
+          security verify-cert -c "$RUNNER_TEMP/fixture-cert.pem" -p ssl -s api.anthropic.com
+          echo "127.0.0.1 api.anthropic.com chatgpt.com" | sudo tee -a /etc/hosts
+          sudo dscacheutil -flushcache
+          sudo killall -HUP mDNSResponder
+      - run: make host-test
+        env:
+          PLUGIN_ISOLATED_TEST: "1"
+          FIXTURE_CERT: ${{ runner.temp }}/fixture-cert.pem
+          FIXTURE_KEY: ${{ runner.temp }}/fixture-key.pem
+          SOAK_SECONDS: ${{ matrix.soak }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: plugin-${{ matrix.target }}

@@ -27,13 +27,15 @@ MODEL = "claude-opus-4-6"
 
 def main():
     assert os.environ.get("PLUGIN_ISOLATED_TEST") == "1", (
-        "Requires a network-isolated test container"
+        "Requires api.anthropic.com and chatgpt.com pinned to 127.0.0.1, as in the "
+        "Linux test container or macOS CI"
     )
     if len(sys.argv) != 4:
         sys.exit(
             "usage: host_smoke.py <cpa-archive> <cpa-checksums.txt> <plugin-library>"
         )
     archive, checksums_path, library = (Path(arg).resolve() for arg in sys.argv[1:])
+    soak = float(os.environ.get("SOAK_SECONDS", "0"))
     checksums = dict(
         line.split()[::-1] for line in checksums_path.read_text().splitlines()
     )
@@ -196,30 +198,39 @@ def main():
             assert extracted is not None
             binary.write_bytes(extracted.read())
         binary.chmod(0o700)
-        cert, key = root / "cert.pem", root / "key.pem"
-        subprocess.run(
-            [
-                "openssl",
-                "req",
-                "-x509",
-                "-newkey",
-                "rsa:2048",
-                "-nodes",
-                "-days",
-                "1",
-                "-keyout",
-                str(key),
-                "-out",
-                str(cert),
-                "-subj",
-                "/CN=api.anthropic.com",
-                "-addext",
-                "subjectAltName=DNS:api.anthropic.com,DNS:chatgpt.com",
-            ],
-            check=True,
-            capture_output=True,
-        )
-        server = http.server.ThreadingHTTPServer(("127.0.0.1", 443), Fixture)
+        if sys.platform == "darwin":
+            # Go on macOS ignores SSL_CERT_FILE; CI trusts this cert in the keychain.
+            cert, key = (
+                Path(os.environ["FIXTURE_CERT"]),
+                Path(os.environ["FIXTURE_KEY"]),
+            )
+        else:
+            cert, key = root / "cert.pem", root / "key.pem"
+            subprocess.run(
+                [
+                    "openssl",
+                    "req",
+                    "-x509",
+                    "-newkey",
+                    "rsa:2048",
+                    "-nodes",
+                    "-days",
+                    "1",
+                    "-keyout",
+                    str(key),
+                    "-out",
+                    str(cert),
+                    "-subj",
+                    "/CN=api.anthropic.com",
+                    "-addext",
+                    "subjectAltName=DNS:api.anthropic.com,DNS:chatgpt.com",
+                ],
+                check=True,
+                capture_output=True,
+            )
+        # macOS allows unprivileged binds below port 1024 only on the wildcard address.
+        bind = "0.0.0.0" if sys.platform == "darwin" else "127.0.0.1"
+        server = http.server.ThreadingHTTPServer((bind, 443), Fixture)
         tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         tls.load_cert_chain(cert, key)
         server.socket = tls.wrap_socket(server.socket, server_side=True)
@@ -249,7 +260,7 @@ def main():
             )
         plugin_dir = root / "plugins"
         plugin_dir.mkdir()
-        (plugin_dir / (PLUGIN + ".so")).write_bytes(library.read_bytes())
+        (plugin_dir / (PLUGIN + library.suffix)).write_bytes(library.read_bytes())
         config = root / "config.yaml"
         config.write_text(f"""host: 127.0.0.1
 port: 18318
@@ -276,6 +287,9 @@ plugins:
 """)
         log = (root / "host.log").open("w+")
         env = dict(os.environ, SSL_CERT_FILE=str(cert), GOMEMLIMIT="256MiB")
+        if soak:
+            # Force frequent GC in both runtimes while they share the process.
+            env["GOGC"] = "10"
         proc = subprocess.Popen(
             [str(binary), "--config", str(config), "--local-model"],
             cwd=root,
@@ -367,6 +381,14 @@ plugins:
                     list(pool.map(lambda _: message(), range(32)))
                     == ["z-five-hours"] * 32
                 )
+            end, soaked = time.monotonic() + soak, 0
+            with ThreadPoolExecutor(max_workers=16) as pool:
+                while time.monotonic() < end:
+                    replies = list(pool.map(lambda i: message(i % 4 == 0), range(64)))
+                    assert all("z-five-hours" in r for r in replies), (
+                        "soak routing failed"
+                    )
+                    soaked += len(replies)
             exhausted.add("z-five-hours")
             configure("active", "1m")
             assert message() == "c-one-day", "short-window exhausted account selected"
@@ -411,14 +433,13 @@ plugins:
                     "credential routing fields changed"
                 )
             assert not fixture_errors, fixture_errors
-            memory = next(
-                line
-                for line in Path(f"/proc/{proc.pid}/status").read_text().splitlines()
-                if line.startswith("VmRSS:")
-            )
+            soak_note = f"{soaked} requests in a {soak:.0f} s soak, " if soak else ""
             print(
-                "PASS: official release checksum verified; shadow/active, streaming, 32 concurrent requests, exhaustion, reset rollover, quota outage, 429 failover, hot-disable rollback; "
-                + memory
+                "PASS: official release checksum verified; shadow/active, streaming, 32 concurrent requests, "
+                + soak_note
+                + "exhaustion, reset rollover, quota outage, 429 failover, hot-disable rollback; RSS "
+                + rss_kib(proc.pid)
+                + " KiB"
             )
         except BaseException:
             log.flush()
@@ -440,6 +461,20 @@ plugins:
                 raise AssertionError("CPA shutdown timed out")
             log.close()
             server.shutdown()
+
+
+def rss_kib(pid):
+    if sys.platform == "darwin":
+        return subprocess.run(
+            ["ps", "-o", "rss=", "-p", str(pid)],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    status = Path(f"/proc/{pid}/status").read_text()
+    return next(
+        line.split()[1] for line in status.splitlines() if line.startswith("VmRSS:")
+    )
 
 
 if __name__ == "__main__":
