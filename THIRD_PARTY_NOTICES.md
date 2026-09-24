@@ -110,6 +110,7 @@ limitations under the License.
 ## Go standard library and runtime
 
 - Toolchain: go1.26.8
+- `darwin_amd64` builds apply `scripts/go-tls-slot.patch`, which moves the runtime's goroutine pointer from thread-local slot 6 to slot 11.
 - License: BSD-3-Clause
 
 ```text
