@@ -96,9 +96,15 @@ native-test:
 	$(LINUX_ONLY)
 	$(call docker,$(TARGET_ARCH)) $(ISOLATED) -e SSL_CERT_FILE=/tmp/quota-router-fixture.pem $(IMAGE) python3 tests/native_smoke.py $(LIB)
 
+# On macOS this runs on the host, so it needs the fixture setup from .github/workflows/ci.yml; TARGET must match the machine.
 host-test: cpa
-	$(LINUX_ONLY)
+ifeq ($(TARGET_OS),darwin)
+	python3 tests/host_smoke.py dist/cpa/$(CPA_ASSET) dist/cpa/checksums.txt $(LIB)
+else ifeq ($(TARGET_OS),linux)
 	$(call docker,$(TARGET_ARCH)) --cpus 1 --memory 384m --memory-swap 384m $(ISOLATED) $(IMAGE) python3 tests/host_smoke.py dist/cpa/$(CPA_ASSET) dist/cpa/checksums.txt $(LIB)
+else
+	$(error host-test needs a linux or darwin TARGET)
+endif
 
 # Runs on this machine, so TARGET must match it.
 load-test: cpa

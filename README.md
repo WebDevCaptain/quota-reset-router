@@ -113,7 +113,7 @@ Requires Management API authentication. Returns the version, mode, selection pol
 
 Build and test targets take `TARGET`: `linux_amd64` (default), `linux_arm64`, `darwin_amd64`, `darwin_arm64`, or `windows_amd64`.
 
-- Linux and Windows builds, `linux-test`, `native-test`, and `host-test` run in a pinned Docker image.
+- Linux and Windows builds, `linux-test`, `native-test`, and Linux `host-test` run in a pinned Docker image.
 - macOS builds need a macOS host with Go 1.21+ and the Xcode Command Line Tools. Go 1.26.8 is downloaded automatically.
 - `darwin_amd64` first builds the patched toolchain into `dist/_go-tls` (about a minute, once per checkout), then uses it for `make test` and `make build`.
 - `make test` needs Go 1.26+ and a C toolchain.
@@ -123,13 +123,13 @@ make test         # gofmt, go vet, and unit tests with the race detector
 make linux-test   # same, in the pinned Linux container
 make build        # writes dist/<target>/quota-reset-router.<so|dylib|dll>
 make native-test  # Linux only: loads the library through the plugin C ABI
-make host-test    # Linux only: runs the official CLIProxyAPI release with the library
+make host-test    # Linux, or macOS CI: runs the official CLIProxyAPI release with the library
 make zip          # writes dist/release/quota-reset-router_<version>_<target>.zip
 make load-test    # loads the zip into the official CLIProxyAPI; TARGET must match this machine
 ```
 
 - `host-test` and `load-test` download the official CLIProxyAPI v7.3.15 release and verify its checksum.
-- `native-test` and `host-test` run with networking disabled, local TLS fixtures, and synthetic credentials.
+- `native-test` and `host-test` run with networking disabled, local TLS fixtures, and synthetic credentials. On macOS, `host-test` instead needs the quota hosts pinned to 127.0.0.1 and the fixture certificate trusted in the System keychain, which CI sets up; `SOAK_SECONDS` adds a soak under GC pressure.
 - `load-test` starts CLIProxyAPI without credentials, so the plugin makes no network requests.
 - CI builds every target and loads each zip into the official CLIProxyAPI on its own platform.
 - `make clean` removes build output.
